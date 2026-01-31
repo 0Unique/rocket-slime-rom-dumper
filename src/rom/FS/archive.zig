@@ -145,7 +145,7 @@ pub const FSArchive = extern struct {
             std.debug.print("Failed to seek to file name table: {}\n", .{err});
             return out;
         };
-        const fntentry = FS.rom.reader().readStruct(file.FntDirEntry) catch |err| {
+        const fntentry = FS.rom.deprecatedReader().readStruct(file.FntDirEntry) catch |err| {
             std.debug.print("Failed to read file name table entry: {}\n", .{err});
             return out;
         };

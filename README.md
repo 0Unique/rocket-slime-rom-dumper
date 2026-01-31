@@ -1,0 +1,11 @@
+## TODO
+ - refactor
+ - switch to sdl3's palette based graphics
+ - switch to sdl3's tiling
+ - find the rest of the ent data lists
+ - implement harcoded static sprites
+ - actual error handling
+ - rom.close() causes a segfault when you close it
+ - implement the rest the OAM OBJ sprites
+ - implement animations
+ - rewrite NitroFS code to not use deprecatedReader

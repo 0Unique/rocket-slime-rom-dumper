@@ -48,24 +48,22 @@ pub const FSFile = extern struct {
         index: u16,
     ) void {
         const rom: *std.fs.File = FS.rom;
-        std.log.info("offset: {x}", .{self.props.pos.pos + self.arc.fnt});
         rom.seekTo(self.props.pos.pos + self.arc.fnt) catch |err| {
             std.log.err("Failed to seek to file position: {}\n", .{err});
             return;
         };
 
-        const len = (rom.reader().readByte() catch 0) & 0x7F;
+        const len = (rom.deprecatedReader().readByte() catch 0) & 0x7F;
         self.props.pos.pos += @sizeOf(u8);
         const name = std.heap.page_allocator.alloc(u8, len) catch |err| {
             std.log.err("Failed to allocate memory for file name: {}\n", .{err});
             return;
         };
-        _ = rom.reader().read(name) catch |err| {
+        _ = rom.deprecatedReader().read(name) catch |err| {
             std.log.err("Failed to read file name: {}\n", .{err});
             return;
         };
         self.props.pos.index = index;
-        std.log.info("File \"{s}\" with len {}", .{ name, len });
         self.props.name = @ptrCast(name);
         self.props.name_len = len;
         self.props.pos.pos += len;
@@ -79,13 +77,11 @@ pub const FSFile = extern struct {
 
     pub fn SeekTo(self: *FSFile) void {
         const pos = self.arc.fat + self.props.pos.index * @sizeOf(FatFileEntry);
-        std.log.info("File entry offset: {x}", .{pos});
         FS.rom.seekTo(pos) catch |err| {
             std.log.err("Failed to seek to file position: {}\n", .{err});
             return;
         };
-        std.log.info("File entry offset: {x}", .{pos});
-        const entry = FS.rom.reader().readStruct(FatFileEntry) catch |err| {
+        const entry = FS.rom.deprecatedReader().readStruct(FatFileEntry) catch |err| {
             std.log.err("Failed to read file position: {}\n", .{err});
             return;
         };
@@ -95,16 +91,11 @@ pub const FSFile = extern struct {
             std.log.err("Failed to seek to file position: {}\n", .{err});
             return;
         };
-        std.log.info("File data offset: {x} to {x}", .{ entry.top, entry.bottom });
     }
 
     pub fn SeekIndexed(self: *FSFile, index: i64) u32 {
-        self.SeekTo();
-        const reader = FS.rom.reader();
-        const num_entries = reader.readInt(u32, .little) catch |err| {
-            std.log.err("Failed to read file length: {}\n", .{err});
-            return 0;
-        };
+        const reader = FS.rom.deprecatedReader();
+        const num_entries = self.getEntryCount();
         FS.rom.seekBy(index * 8) catch |err| {
             std.log.err("Failed to seek to file position: {}\n", .{err});
             return 0;
@@ -113,12 +104,12 @@ pub const FSFile = extern struct {
             std.log.err("Failed to read file length: {}\n", .{err});
             return 0;
         };
-        std.debug.print("start_offset: {x}\n", .{offset});
+        //std.debug.print("start_offset: {x}\n", .{offset});
         const size = reader.readInt(u32, .little) catch |err| {
             std.log.err("Failed to read file length: {}\n", .{err});
             return 0;
         };
-        std.debug.print("size: {x}\n", .{size});
+        //std.debug.print("size: {x}\n", .{size});
         self.SeekTo();
         FS.rom.seekBy(offset + num_entries * 8 + 4) catch |err| {
             std.log.err("Failed to seek to file position: {}\n", .{err});
@@ -127,8 +118,39 @@ pub const FSFile = extern struct {
         return size;
     }
 
+    pub fn getEntryCount(self: *FSFile) u32 {
+        self.SeekTo();
+        const reader = FS.rom.deprecatedReader();
+        const num_entries = reader.readInt(u32, .little) catch |err| {
+            std.log.err("Failed to read file length: {}\n", .{err});
+            return 0;
+        };
+        return num_entries;
+    }
+
     pub fn length(self: *FSFile) u32 {
         return self.props.pos.bottom - self.props.pos.pos;
+    }
+
+    pub fn readIndexedRaw(self: *FSFile, allocator: *std.mem.Allocator, fid: u16) ![]u8 {
+        const size = self.SeekIndexed(fid);
+        const out = try allocator.alloc(u8, size);
+        _ = try FS.rom.read(out);
+        return out;
+    }
+
+    pub fn readIndexedStruct(self: *FSFile, allocator: *std.mem.Allocator, fid: u16, T: type) !*T {
+        _ = self.SeekIndexed(fid);
+        const out = try allocator.create(T);
+        _ = try FS.rom.read(@as([]u8, @ptrCast(out)));
+        return out;
+    }
+
+    pub fn readIndexedSlice(self: *FSFile, allocator: *std.mem.Allocator, fid: u16, T: type, count: usize) ![]T {
+        _ = self.SeekIndexed(fid);
+        const out = try allocator.alloc(T, count);
+        _ = try FS.rom.read(@as([]u8, @ptrCast(out)));
+        return out;
     }
 };
 
