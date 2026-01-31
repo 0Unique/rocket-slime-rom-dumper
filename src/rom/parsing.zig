@@ -114,9 +114,6 @@ pub fn load_compressed_ent_data(file: *File.FSFile, file_index: u32, uncompresse
 }
 
 pub fn read_ent_gx_data(file: *File.FSFile, res_entry: *ent.ent_res_entry, screen: graphics.Screen, allocator: *std.mem.Allocator, palette: *graphics.Palette256) graphics.Sprite {
-    //const oam: OAMFileData = load_compressed_ent_data(file, res_entry.oam_file_id, true, allocator);
-    //const tilesRaw = load_compressed_ent_data(file, res_entry.tiles_file_id, true, allocator);
-    //const oam = file.readIndexedStruct(allocator, res_entry.oam_file_id, OAMFileData);
     const oam: *OAMFileData = OAMFileData.init_from_rom(allocator, file, res_entry.oam_file_id) catch {
         @panic("error");
     };
@@ -125,10 +122,7 @@ pub fn read_ent_gx_data(file: *File.FSFile, res_entry: *ent.ent_res_entry, scree
         @panic("error");
     };
 
-    //const tiles: []graphics.Tile = @ptrCast(if (screen == .top) tilesRaw else compression.decompress8(tilesRaw, allocator));
     const tiles: []graphics.Tile = @ptrCast(tilesRaw);
-
-    //const tileMap = graphics.load_tile_map_tex(palette: *[16][16]Color, rom_file: *FSFile, tiles_file_index: i64, map_file_index: i64, allocator: Allocator, renderer: *Renderer)
 
     _ = screen;
     return .{

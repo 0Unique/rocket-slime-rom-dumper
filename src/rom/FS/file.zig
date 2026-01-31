@@ -135,7 +135,8 @@ pub const FSFile = extern struct {
     pub fn readIndexedRaw(self: *FSFile, allocator: *std.mem.Allocator, fid: u16) ![]u8 {
         const size = self.SeekIndexed(fid);
         const out = try allocator.alloc(u8, size);
-        _ = try FS.rom.read(out);
+        if (size > 0) // causes a crash on windows without this
+            _ = try FS.rom.read(out);
         return out;
     }
 
