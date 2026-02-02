@@ -79,15 +79,6 @@ pub fn debugPrintPalette(pal: *Palette256) void {
     std.debug.print("\n", .{});
 }
 
-pub const SDL_TileMap = struct {
-    surface: sdl3.surface.Surface,
-    palette_entries: [8][8]u4,
-};
-
-pub const TileMap = struct {
-    palette_entries: [8][8]u4,
-};
-
 pub fn load_tile_map(palette: *Palette256, rom_file: *file.FSFile, tiles_file_index: i64, map_file_index: i64, allocator: std.mem.Allocator) !sdl3.surface.Surface {
     const tiles_size = rom_file.SeekIndexed(tiles_file_index);
     const tile_count = tiles_size / @sizeOf(Tile);

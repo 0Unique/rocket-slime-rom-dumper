@@ -57,13 +57,14 @@ pub fn render(allocator: *std.mem.Allocator) !void {
                 .h = 21,
             });
 
-            if (cursor.@"0".left and root.overlayActive == false) {
+            if (cursor.@"0".left and root.overlayActive == false and delay == 0) {
                 oam_sprites = try list.load_sprites(allocator);
                 oam_list = &list;
                 screen = list.screen;
                 sprite_num = 0;
                 frame_num = 0;
                 cur_action = &OamSpriteView;
+                delay = 20;
             }
         }
 
@@ -280,7 +281,7 @@ fn OamSpriteView() anyerror!void {
 }
 fn saveFramePNG() anyerror!void {
     var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "./{s}-{}-{}.png", .{ oam_list.label, sprite_num, frame_num });
+    const default_name = try std.fmt.bufPrintZ(&buf, "/{s}-{}-{}.png", .{ oam_list.label, sprite_num, frame_num });
     sdl3.dialog.showSaveFile(void, &saveFramePNGFileSelected, null, try root.renderer.getWindow(), null, default_name);
 }
 
@@ -308,7 +309,7 @@ fn saveFramePNGFileSelected(_: ?*void, file_list: ?[]const [*:0]const u8, filter
 
 fn savePalette() anyerror!void {
     var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "./pal:{}-{s}", .{ oam_list.palette_fid, oam_list.file_name });
+    const default_name = try std.fmt.bufPrintZ(&buf, "/pal:{}-{s}", .{ oam_list.palette_fid, oam_list.file_name });
     sdl3.dialog.showSaveFile(void, &savePaletteFileSelected, null, try root.renderer.getWindow(), null, default_name);
 }
 
@@ -339,7 +340,7 @@ fn savePaletteFileSelected(_: ?*void, file_list: ?[]const [*:0]const u8, filter:
 
 fn saveOam() anyerror!void {
     var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "./oam:{}-{s}", .{ oam_sprites[sprite_num].oam_id, oam_list.file_name });
+    const default_name = try std.fmt.bufPrintZ(&buf, "/oam:{}-{s}", .{ oam_sprites[sprite_num].oam_id, oam_list.file_name });
     sdl3.dialog.showSaveFile(void, &saveOamFileSelected, null, try root.renderer.getWindow(), null, default_name);
 }
 
@@ -370,7 +371,7 @@ fn saveOamFileSelected(_: ?*void, file_list: ?[]const [*:0]const u8, filter: ?us
 
 fn saveTiles() anyerror!void {
     var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "./tiles:{}-{s}", .{ oam_sprites[sprite_num].tiles_id, oam_list.file_name });
+    const default_name = try std.fmt.bufPrintZ(&buf, "/tiles:{}-{s}", .{ oam_sprites[sprite_num].tiles_id, oam_list.file_name });
     sdl3.dialog.showSaveFile(void, &saveOamFileSelected, null, try root.renderer.getWindow(), null, default_name);
 }
 

@@ -1,15 +1,13 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) !void {
-    //const target = std.Build.standardTargetOptions(b, .{ .default_target = .{ .os_tag = .windows, .ofmt = .coff } });
-    const target = std.Build.standardTargetOptions(b, .{});
+    const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-
-    // if (optimize == .ReleaseFast) @compileError("ReleaseFast does not work with ");
 
     const exe = b.addExecutable(.{
         .name = "rocket-slime-sprite-viewer",
-        .linkage = .static,
+        .linkage = if (builtin.os.tag == .linux) .dynamic else .static, // windows has trouble with dynamic builds
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

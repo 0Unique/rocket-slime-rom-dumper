@@ -1,11 +1,4 @@
-let
-  nixpkgs = fetchTarball "https://github.com/NixOS/nixpkgs/tarball/nixos-unstable";
-  pkgs = import nixpkgs {
-    config = { };
-    overlays = [ ];
-  };
-in
-
+{ pkgs ? import <nixpkgs> {}, win ? false }:
 pkgs.mkShellNoCC {
   packages = with pkgs; [
     zig
@@ -47,12 +40,7 @@ pkgs.mkShellNoCC {
       }
 
     zig fetch --save git+https://codeberg.org/7Games/zig-sdl3#v0.1.6
-    if $win; then
-        # build with: win=true nix-shell
-        zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSmall
-    else
-        zig build && ./zig-out/bin/main
-    fi
+    zig build ${if win then "-Dtarget=x86_64-windows -Doptimize=ReleaseSmall" else "&& ./zig-out/bin/rocket-slime-sprite-viewer"}
     exit
   '';
 }
