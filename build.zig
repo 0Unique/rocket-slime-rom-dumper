@@ -24,4 +24,8 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("sdl3", sdl3.module("sdl3"));
 
     b.installArtifact(exe);
+
+    const src_dir = try std.fs.cwd().openDir("src", .{});
+    const dest_dir = try std.fs.cwd().openDir("zig-out/bin", .{});
+    try src_dir.copyFile("JetBrainsMono-Regular.ttf", dest_dir, "JetBrainsMono-Regular.ttf", .{});
 }

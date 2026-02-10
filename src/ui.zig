@@ -10,8 +10,11 @@ const FontSize = 14;
 var root: uiRoot = undefined;
 
 pub fn init(renderer: *sdl3.render.Renderer, allocator: *std.mem.Allocator) !void {
+    const exe_dir = try std.fs.selfExeDirPathAlloc(allocator.*);
+    const paths = [2][]const u8{ exe_dir, "JetBrainsMono-Regular.ttf" };
+    const font_path = try std.fs.path.joinZ(allocator.*, &paths);
     root = .{
-        .font = try sdl3.ttf.Font.init("/home/fisher/projects/rocket-slime-rom-dumper/src/JetBrainsMono-Regular.ttf", FontSize),
+        .font = try sdl3.ttf.Font.init(font_path, FontSize),
         .renderer = renderer,
         .textEngine = try sdl3.ttf.RendererTextEngine.init(renderer.*),
         .allocator = allocator,
