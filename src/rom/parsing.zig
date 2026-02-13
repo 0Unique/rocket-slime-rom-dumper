@@ -68,7 +68,7 @@ pub fn read_ent_data(address: ent.ListAddresses, allocator: std.mem.Allocator) !
 pub const OAMFileData = struct {
     frames: []graphics.Frame,
 
-    pub fn init_from_rom(allocator: *std.mem.Allocator, file: *File.FSFile, fid: u16) !*OAMFileData {
+    pub fn init_from_rom(allocator: std.mem.Allocator, file: *File.FSFile, fid: u16) !*OAMFileData {
         _ = file.SeekIndexed(fid);
         const out = try allocator.create(OAMFileData);
         try FS.rom.seekBy(2);
@@ -113,7 +113,7 @@ pub fn load_compressed_ent_data(file: *File.FSFile, file_index: u32, uncompresse
     return data;
 }
 
-pub fn read_ent_gx_data(file: *File.FSFile, res_entry: *ent.ent_res_entry, screen: graphics.Screen, allocator: *std.mem.Allocator, palette: *graphics.Palette256) graphics.Sprite {
+pub fn read_ent_gx_data(file: *File.FSFile, res_entry: *ent.ent_res_entry, screen: graphics.Screen, allocator: std.mem.Allocator, palette: *graphics.Palette256) graphics.Sprite {
     const oam: *OAMFileData = OAMFileData.init_from_rom(allocator, file, res_entry.oam_file_id) catch {
         @panic("error");
     };

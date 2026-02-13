@@ -4,148 +4,127 @@ const ent = @import("rom/ent.zig");
 const graphics = @import("rom/graphics.zig");
 const parsing = @import("rom/parsing.zig");
 const FS = @import("rom/FS/FS.zig");
+const events = @import("events.zig");
 
 const FontSize = 14;
 
-var root: uiRoot = undefined;
+pub var eventQueue: std.PriorityQueue(events.UiEvent, void, sortEvent) = undefined;
+pub var allocator: std.mem.Allocator = undefined;
+pub var renderer: *sdl3.render.Renderer = undefined;
+pub var font: sdl3.ttf.Font = undefined;
+pub var textEngine: sdl3.ttf.RendererTextEngine = undefined;
 
-pub fn init(renderer: *sdl3.render.Renderer, allocator: *std.mem.Allocator) !void {
-    const exe_dir = try std.fs.selfExeDirPathAlloc(allocator.*);
-    const paths = [2][]const u8{ exe_dir, "JetBrainsMono-Regular.ttf" };
-    const font_path = try std.fs.path.joinZ(allocator.*, &paths);
-    root = .{
-        .font = try sdl3.ttf.Font.init(font_path, FontSize),
-        .renderer = renderer,
-        .textEngine = try sdl3.ttf.RendererTextEngine.init(renderer.*),
-        .allocator = allocator,
+var fps_capper: sdl3.extras.FramerateCapper(f32) = undefined;
+pub var supress_inputs = false;
+pub var mouse_clicked = false;
+pub var mouse_scroll: f32 = 0;
+
+fn get_font() !sdl3.ttf.Font {
+    const env = std.process.getEnvMap(allocator) catch {
+        @panic("env fail");
     };
-
-    try refresh();
+    const wine_workaround = env.get("wine_workaround");
+    if (wine_workaround != null) // because selfExeDirPathAlloc does not work in wine
+        return try sdl3.ttf.Font.init("./zig-out/bin/JetBrainsMono-Regular.ttf", FontSize)
+    else {
+        const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
+        const paths = [2][]const u8{ exe_dir, "JetBrainsMono-Regular.ttf" };
+        const font_path = try std.fs.path.joinZ(allocator, &paths);
+        return try sdl3.ttf.Font.init(font_path, FontSize);
+    }
 }
 
-pub fn refresh() !void {
-    const size = try root.renderer.getOutputSize();
+pub fn init(r: *sdl3.render.Renderer, a: std.mem.Allocator) !void {
+    renderer = r;
+    allocator = a;
 
-    root.panels = .{
-        .{
-            .color = rgb(48, 52, 70),
-            .rect = .{ .x = 0, .y = 0, .w = @floatFromInt(size.@"0"), .h = 32 },
-        },
-        .{
-            .color = rgb(35, 38, 52),
-            .rect = .{ .x = @floatFromInt(@divFloor(size.@"0", 4)), .y = 32, .w = @floatFromInt(size.@"0" - @divFloor(size.@"0", 4)), .h = @floatFromInt(size.@"1" - 32) },
-        },
-        .{
-            .color = rgb(41, 44, 60),
-            .rect = .{ .x = 0, .y = 32, .w = @floatFromInt(@divFloor(size.@"0", 4)), .h = @floatFromInt(size.@"1" - 32) },
-        },
-    };
+    eventQueue = @TypeOf(eventQueue).init(a, undefined);
+    fps_capper = sdl3.extras.FramerateCapper(f32){ .mode = .{ .limited = 30 } };
+
+    textEngine = try sdl3.ttf.RendererTextEngine.init(renderer.*);
+    font = try get_font();
+
+    add_event(events.StartupEvent);
 }
 
-var cur_action: ?*const fn () anyerror!void = null;
+pub fn deinit() void {
+    eventQueue.deinit();
+    FS.deinit();
+}
 
-pub fn render(allocator: *std.mem.Allocator) !void {
-    try root.drawOutline();
-    try root.updateTopBar();
+pub fn update() !bool {
+    try renderer.clear();
 
-    const cursor = sdl3.mouse.getState();
+    const quit = register_events();
 
-    for (ent.ent_res_entry_lists, 0..) |list, i| {
-        if (cursor.@"1" < root.panels[2].rect.w and cursor.@"2" > @as(f32, @floatFromInt(i * 24 + 32)) and cursor.@"2" < @as(f32, @floatFromInt((i + 1) * 24 + 32))) {
-            try root.renderer.setDrawColor(rgb(65, 69, 89));
-            try root.renderer.renderFillRect(.{
-                .x = 4,
-                .y = @as(f32, @floatFromInt(i)) * 24 + 32 + 6,
-                .w = root.panels[2].rect.w - 8,
-                .h = 21,
-            });
+    run_events();
 
-            if (cursor.@"0".left and root.overlayActive == false and delay == 0) {
-                oam_sprites = try list.load_sprites(allocator);
-                oam_list = &list;
-                screen = list.screen;
-                sprite_num = 0;
-                frame_num = 0;
-                cur_action = &OamSpriteView;
-                delay = 20;
-            }
+    try renderer.present();
+
+    return quit;
+}
+
+fn execute_event() !void {
+    const event = eventQueue.remove();
+    event.run(event.data);
+}
+
+pub fn add_event(event: events.UiEvent) void {
+    eventQueue.add(event) catch unreachable;
+}
+
+fn register_events() bool {
+    while (sdl3.events.poll()) |event|
+        switch (event) {
+            .quit => return true,
+            .terminating => return true,
+            .window_resized => add_event(events.WindowSizeChanged),
+            .mouse_button_up => mouse_clicked = true,
+            .mouse_wheel => mouse_scroll = event.mouse_wheel.scroll_y,
+            else => {},
+        };
+    add_event(events.DrawPanelsEvent);
+    add_event(events.TopPanelUpdateEvent);
+    if (events.view_event) |event|
+        add_event(event);
+    if (events.display_event) |event|
+        add_event(event);
+    if (events.dropdown_event) |event|
+        add_event(event);
+
+    return false;
+}
+
+fn run_events() void {
+    while (eventQueue.removeOrNull()) |event| {
+        if (supress_inputs and event.type == .input) {
+            continue;
         }
-
-        try root.panels[2].relativeText(list.label, .topleft, 16, @as(f32, @floatFromInt(i)) * 24 + 6);
+        event.run(event.data);
     }
-
-    if (cur_action != null) try cur_action.?();
-
-    if (delay > 0) {
-        delay -= 1;
-    }
+    supress_inputs = false;
+    mouse_clicked = false;
+    mouse_scroll = 0;
 }
 
-fn rgb(r: comptime_int, g: comptime_int, b: comptime_int) sdl3.pixels.Color {
-    return .{ .r = r, .g = g, .b = b, .a = 255 };
+fn sortEvent(_: void, a: events.UiEvent, b: events.UiEvent) std.math.Order {
+    return std.math.order(@intFromEnum(a.prio), @intFromEnum(b.prio));
 }
 
-fn rgba(r: comptime_int, g: comptime_int, b: comptime_int, a: comptime_int) sdl3.pixels.Color {
-    return .{ .r = r, .g = g, .b = b, .a = a };
+pub fn drawText(text: []const u8, x: f32, y: f32) !void {
+    const rendtext = try renderText(text);
+    try drawRenderedText(rendtext, x, y);
 }
 
-fn dummy() void {}
+pub fn renderText(text: []const u8) !sdl3.ttf.Text {
+    return try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&textEngine)).*, font, text);
+}
 
-const uiRoot = struct {
-    font: sdl3.ttf.Font,
-    renderer: *sdl3.render.Renderer,
-    textEngine: sdl3.ttf.RendererTextEngine,
-    allocator: *std.mem.Allocator,
-
-    overlayActive: bool = false,
-
-    panels: [3]Panel = std.mem.zeroes([3]Panel),
-
-    topbar: TopBarType = .{
-        .droplabels = [2][]const u8{
-            "File",
-            "About",
-        },
-    },
-
-    pub fn drawOutline(self: *uiRoot) !void {
-        for (self.panels) |panel| {
-            try self.renderer.setDrawColor(panel.color);
-            try self.renderer.renderFillRect(panel.rect);
-        }
-    }
-
-    pub fn drawText(self: *uiRoot, text: []const u8, x: f32, y: f32) !void {
-        const rendtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&self.textEngine)).*, self.font, text);
-        try rendtext.setColor(198, 208, 245, 255);
-        try sdl3.ttf.drawRendererText(rendtext, x, y);
-    }
-
-    pub fn updateTopBar(self: *uiRoot) !void {
-        const cursor = sdl3.mouse.getState();
-
-        for (self.topbar.droplabels, 0..) |text, i| {
-            const rendtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&self.textEngine)).*, self.font, text);
-            try rendtext.setColor(198, 208, 245, 255);
-
-            if (cursor.@"2" < 32 and cursor.@"1" > @as(f32, @floatFromInt(i * 48)) and cursor.@"1" < @as(f32, @floatFromInt((i + 1) * 48))) {
-                try self.renderer.setDrawColor(rgb(65, 69, 89));
-                try self.renderer.renderFillRect(.{
-                    .x = @floatFromInt(12 + (i * 48)),
-                    .y = 4,
-                    .w = @floatFromInt((try rendtext.getSize()).@"0" + 8),
-                    .h = 24,
-                });
-
-                if (cursor.@"0".left and root.overlayActive == false) {
-                    std.log.info("clicked {s}", .{text});
-                }
-            }
-
-            try sdl3.ttf.drawRendererText(rendtext, @floatFromInt(i * 48 + 16), @floatFromInt(7));
-        }
-    }
-};
+pub fn drawRenderedText(text: sdl3.ttf.Text, x: f32, y: f32) !void {
+    if (@intFromPtr(text.value) == 0) return; // it was occasionally segfaulting in wine without this
+    try text.setColor(198, 208, 245, 255);
+    try sdl3.ttf.drawRendererText(text, x, y);
+}
 
 const Corner = enum {
     topleft,
@@ -157,6 +136,7 @@ const Corner = enum {
 const Panel = struct {
     color: sdl3.pixels.Color,
     rect: sdl3.rect.Rect(f32),
+    get_rect: *const fn () sdl3.rect.Rect(f32),
 
     pub fn relativeRect(self: *Panel, corner: Corner, x: f32, y: f32, w: f32, h: f32) sdl3.rect.Rect(f32) {
         return switch (corner) {
@@ -167,248 +147,63 @@ const Panel = struct {
         };
     }
 
-    pub fn relativePos(self: *Panel, corner: Corner, x: f32, y: f32) Pos {
+    pub fn relativePos(self: *Panel, corner: Corner, x: f32, y: f32) struct { f32, f32 } {
         const xpos = if (corner == .topleft or corner == .bottomleft) self.rect.x + x else self.rect.x + self.rect.w - x;
         const ypos = if (corner == .topleft or corner == .topright) self.rect.y + y else self.rect.y + self.rect.h - y;
-        return .{ .x = xpos, .y = ypos };
+        return .{ xpos, ypos };
     }
 
     pub fn relativeText(self: *Panel, text: []const u8, corner: Corner, x: f32, y: f32) !void {
-        const xpos = if (corner == .topleft or corner == .bottomleft) self.rect.x + x else self.rect.x + self.rect.w - x;
-        const ypos = if (corner == .topleft or corner == .topright) self.rect.y + y else self.rect.y + self.rect.y - y;
-        try root.drawText(text, xpos, ypos);
+        const pos = self.relativePos(corner, x, y);
+        try drawText(text, pos.@"0", pos.@"1");
+    }
+
+    pub fn draw(self: *Panel) !void {
+        try renderer.setDrawColor(self.color);
+        try renderer.renderFillRect(self.rect);
     }
 };
 
-const Pos = struct {
-    x: f32,
-    y: f32,
+fn get_top_panel_rect() sdl3.rect.Rect(f32) {
+    const size = renderer.getCurrentOutputSize() catch .{ 0, 0 };
+    return .{ .x = 0, .y = 0, .w = @floatFromInt(size.@"0"), .h = 32 };
+}
+pub var top_panel: Panel = .{
+    .color = rgb(48, 52, 70),
+    .rect = undefined,
+    .get_rect = &get_top_panel_rect,
+};
+fn get_main_panel_rect() sdl3.rect.Rect(f32) {
+    const size = renderer.getCurrentOutputSize() catch .{ 0, 0 };
+    return .{ .x = @floatFromInt(@divFloor(size.@"0", 5)), .y = 32, .w = @floatFromInt(size.@"0" - @divFloor(size.@"0", 5)), .h = @floatFromInt(size.@"1" - 32) };
+}
+pub var main_panel: Panel = .{
+    .color = rgb(35, 38, 52),
+    .rect = undefined,
+    .get_rect = &get_main_panel_rect,
+};
+fn get_side_panel_rect() sdl3.rect.Rect(f32) {
+    const size = renderer.getCurrentOutputSize() catch .{ 0, 0 };
+    return .{ .x = 0, .y = 32, .w = @floatFromInt(@divFloor(size.@"0", 5)), .h = @floatFromInt(size.@"1" - 32) };
+}
+pub var side_panel: Panel = .{
+    .color = rgb(41, 44, 60),
+    .rect = undefined,
+    .get_rect = &get_side_panel_rect,
 };
 
-const TopBarType = struct {
-    droplabels: [2][]const u8,
-};
-
-var oam_sprites: []graphics.Sprite = undefined;
-var oam_list: *const ent.ent_res_list = undefined;
-var screen: graphics.Screen = .bottom;
-var sprite_num: usize = 0;
-var sprite_changed = false;
-var frame_num: usize = 0;
-var zoom: usize = 1;
-
-fn OamSpriteView() anyerror!void {
-    //try root.panels[1].relativeText("pallete: ", .topleft, 16, 16);
-    var pos: Pos = root.panels[1].relativePos(.topleft, 16, 16);
-    const sntext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, "sprite:");
-    try sntext.setColor(198, 208, 245, 255);
-    try sdl3.ttf.drawRendererText(sntext, pos.x, pos.y);
-
-    pos.x += @floatFromInt((try sntext.getSize()).@"0");
-
-    const prevsn = sprite_num;
-    pos.x += try NumInput(&sprite_num, 0, oam_sprites.len - 1, pos.x, pos.y) + 16;
-    if (prevsn != sprite_num) frame_num = 0;
-
-    const fntext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, "frame:");
-    try fntext.setColor(198, 208, 245, 255);
-    try sdl3.ttf.drawRendererText(fntext, pos.x, pos.y);
-
-    pos.x += @floatFromInt((try fntext.getSize()).@"0");
-
-    pos.x += try NumInput(&frame_num, 0, oam_sprites[sprite_num].oamData.frames.len - 1, pos.x, pos.y) + 16;
-
-    const zoomtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, "zoom:");
-    try zoomtext.setColor(198, 208, 245, 255);
-    try sdl3.ttf.drawRendererText(zoomtext, pos.x, pos.y);
-
-    pos.x += @floatFromInt((try zoomtext.getSize()).@"0");
-
-    _ = try NumInput(&zoom, 1, 20, pos.x, pos.y);
-
-    var bpos: Pos = root.panels[1].relativePos(.bottomleft, 16, 64);
-    const screentext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, if (screen == .top) "top screen" else "bottom screen");
-    try screentext.setColor(198, 208, 245, 255);
-    try sdl3.ttf.drawRendererText(screentext, bpos.x, bpos.y);
-
-    if (oam_list.compressed) {
-        const compressedtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, " - tiles possibly compressed");
-        try compressedtext.setColor(198, 208, 245, 255);
-        try sdl3.ttf.drawRendererText(compressedtext, bpos.x + @as(f32, @floatFromInt((try screentext.getSize()).@"0")), bpos.y);
-    }
-
-    bpos.y += @floatFromInt((try screentext.getSize()).@"1" + 4);
-
-    const filenametext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, oam_list.file_name);
-    try filenametext.setColor(198, 208, 245, 255);
-    try sdl3.ttf.drawRendererText(filenametext, bpos.x, bpos.y);
-
-    bpos.x += @floatFromInt((try filenametext.getSize()).@"0" + 24);
-
-    const fileIdLabel = "file indexes - ";
-
-    const filetext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, fileIdLabel);
-    try filetext.setColor(198, 208, 245, 255);
-    try sdl3.ttf.drawRendererText(filetext, bpos.x, bpos.y);
-
-    bpos.x += @floatFromInt((try filetext.getSize()).@"0");
-
-    var buf: [10]u8 = undefined;
-
-    const paltext = try std.fmt.bufPrint(&buf, "pal:{}", .{oam_list.palette_fid});
-    bpos.x += try Button(&savePalette, paltext, bpos.x, bpos.y) + 8;
-    const oamtext = try std.fmt.bufPrint(&buf, "oam:{}", .{oam_sprites[sprite_num].oam_id});
-    bpos.x += try Button(&saveOam, oamtext, bpos.x, bpos.y) + 8;
-    const tilestext = try std.fmt.bufPrint(&buf, "tiles:{}", .{oam_sprites[sprite_num].tiles_id});
-    bpos.x += try Button(&saveTiles, tilestext, bpos.x, bpos.y) + 8;
-
-    const surf = oam_sprites[sprite_num].createSurface(frame_num) catch |err| {
-        var text: []const u8 = undefined;
-        text = if (err == error.NoOamAttributes) "no data for selected frame" else "error loading sprite";
-
-        const errPos = root.panels[1].relativePos(.topleft, 16, 48);
-
-        const errtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, text);
-        try errtext.setColor(198, 208, 245, 255);
-        try sdl3.ttf.drawRendererText(errtext, errPos.x, errPos.y);
-        return;
-    };
-    const surf_tex = try root.renderer.createTextureFromSurface(surf);
-    const surf_rect = root.panels[1].relativeRect(.topleft, 16, 48, @floatFromInt(surf.getWidth() * zoom), @floatFromInt(surf.getHeight() * zoom));
-    try root.renderer.setDrawColor(rgb(81, 87, 109));
-    try root.renderer.renderRect(surf_rect);
-    try root.renderer.renderTexture(surf_tex, null, surf_rect);
-
-    const brpos = root.panels[1].relativePos(.bottomright, 192, 64);
-    _ = try Button(&saveFramePNG, "Save Frame as PNG", brpos.x, brpos.y);
-}
-fn saveFramePNG() anyerror!void {
-    var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "/{s}-{}-{}.png", .{ oam_list.label, sprite_num, frame_num });
-    sdl3.dialog.showSaveFile(void, &saveFramePNGFileSelected, null, try root.renderer.getWindow(), null, default_name);
+pub fn rgb(r: comptime_int, g: comptime_int, b: comptime_int) sdl3.pixels.Color {
+    return .{ .r = r, .g = g, .b = b, .a = 255 };
 }
 
-fn saveFramePNGFileSelected(_: ?*void, file_list: ?[]const [*:0]const u8, filter: ?usize, err: bool) void {
-    const errs = sdl3.errors.get();
-    if (errs != null) {
-        std.log.err("error with file save dialog: {s}", .{errs.?});
-        return;
-    }
-    if (file_list == null or file_list.?.len == 0 or std.mem.len(file_list.?[0]) == 0) return; // no file selected
-
-    const surf = oam_sprites[sprite_num].createSurface(frame_num) catch {
-        unreachable; // shouldn't ever error here cause the button shows up only if didn't error when displaying it
-    };
-
-    const file_path: [:0]const u8 = std.mem.span(file_list.?[0]);
-
-    sdl3.image.savePng(surf, file_path) catch |perr| {
-        std.log.err("failed to save png: {}", .{perr});
-    };
-
-    _ = filter;
-    _ = err;
+pub fn rgba(r: comptime_int, g: comptime_int, b: comptime_int, a: comptime_int) sdl3.pixels.Color {
+    return .{ .r = r, .g = g, .b = b, .a = a };
 }
 
-fn savePalette() anyerror!void {
-    var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "/pal:{}-{s}", .{ oam_list.palette_fid, oam_list.file_name });
-    sdl3.dialog.showSaveFile(void, &savePaletteFileSelected, null, try root.renderer.getWindow(), null, default_name);
-}
-
-fn savePaletteFileSelected(_: ?*void, file_list: ?[]const [*:0]const u8, filter: ?usize, err: bool) void {
-    const errs = sdl3.errors.get();
-    if (errs != null) {
-        std.log.err("error with file save dialog: {s}", .{errs.?});
-        return;
-    }
-    if (file_list == null or file_list.?.len == 0 or std.mem.len(file_list.?[0]) == 0) return; // no file selected
-
-    var romfile = FS.rom_archive.OpenFile(oam_list.file_name);
-
-    const data = romfile.readIndexedRaw(root.allocator, oam_list.palette_fid) catch {
-        return;
-    };
-    const file = std.fs.createFileAbsoluteZ(file_list.?[0], .{}) catch {
-        return;
-    };
-    _ = file.write(data) catch {
-        return;
-    };
-    file.close();
-
-    _ = filter;
-    _ = err;
-}
-
-fn saveOam() anyerror!void {
-    var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "/oam:{}-{s}", .{ oam_sprites[sprite_num].oam_id, oam_list.file_name });
-    sdl3.dialog.showSaveFile(void, &saveOamFileSelected, null, try root.renderer.getWindow(), null, default_name);
-}
-
-fn saveOamFileSelected(_: ?*void, file_list: ?[]const [*:0]const u8, filter: ?usize, err: bool) void {
-    const errs = sdl3.errors.get();
-    if (errs != null) {
-        std.log.err("error with file save dialog: {s}", .{errs.?});
-        return;
-    }
-    if (file_list == null or file_list.?.len == 0 or std.mem.len(file_list.?[0]) == 0) return;
-
-    var romfile = FS.rom_archive.OpenFile(oam_list.file_name);
-
-    const data = romfile.readIndexedRaw(root.allocator, oam_sprites[sprite_num].oam_id) catch {
-        return;
-    };
-    const file = std.fs.createFileAbsoluteZ(file_list.?[0], .{}) catch {
-        return;
-    };
-    _ = file.write(data) catch {
-        return;
-    };
-    file.close();
-
-    _ = filter;
-    _ = err;
-}
-
-fn saveTiles() anyerror!void {
-    var buf: [30]u8 = undefined;
-    const default_name = try std.fmt.bufPrintZ(&buf, "/tiles:{}-{s}", .{ oam_sprites[sprite_num].tiles_id, oam_list.file_name });
-    sdl3.dialog.showSaveFile(void, &saveOamFileSelected, null, try root.renderer.getWindow(), null, default_name);
-}
-
-fn saveTilesFileSelected(_: ?*void, file_list: ?[]const [*:0]const u8, filter: ?usize, err: bool) void {
-    const errs = sdl3.errors.get();
-    if (errs != null) {
-        std.log.err("error with file save dialog: '{s}'", .{errs.?});
-        return;
-    }
-    if (file_list == null or file_list.?.len == 0 or std.mem.len(file_list.?[0]) == 0) return; // no file selected
-
-    var romfile = FS.rom_archive.OpenFile(oam_list.file_name);
-
-    const data = romfile.readIndexedRaw(root.allocator, oam_sprites[sprite_num].tiles_id) catch {
-        return;
-    };
-    const file = std.fs.createFileAbsoluteZ(file_list.?[0], .{}) catch {
-        return;
-    };
-    _ = file.write(data) catch {
-        return;
-    };
-    file.close();
-
-    _ = filter;
-    _ = err;
-}
-
-var delay: usize = 0;
-
-fn NumInput(value: *usize, min: usize, max: usize, x: f32, y: f32) !f32 {
+pub fn NumInput(value: *usize, min: usize, max: usize, x: f32, y: f32) !f32 {
     const mouse = sdl3.mouse.getState();
 
-    const minus = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, "-");
+    const minus = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&textEngine)).*, font, "-");
     try minus.setColor(198, 208, 245, 255);
     try sdl3.ttf.drawRendererText(minus, x, y);
 
@@ -418,55 +213,50 @@ fn NumInput(value: *usize, min: usize, max: usize, x: f32, y: f32) !f32 {
     var buf: [20]u8 = undefined;
     const numString = try std.fmt.bufPrint(&buf, "{}/{}", .{ value.*, max });
 
-    const rendtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, numString);
+    const rendtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&textEngine)).*, font, numString);
     try rendtext.setColor(198, 208, 245, 255);
     try sdl3.ttf.drawRendererText(rendtext, x + charWidth, y);
 
     const plusX: f32 = x + charWidth + @as(f32, @floatFromInt((try rendtext.getSize()).@"0"));
 
-    const plus = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, "+");
+    const plus = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&textEngine)).*, font, "+");
     try plus.setColor(198, 208, 245, 255);
     try sdl3.ttf.drawRendererText(plus, plusX, y);
 
-    if (delay == 0) {
-        if (mouse.@"0".left == true and root.overlayActive == false) {
-            if (mouse.@"1" > x and value.* > min and mouse.@"2" > y and mouse.@"1" < x + charWidth and mouse.@"2" < y + charHeight) {
-                value.* -= 1;
-                delay = 20;
-            } else if (mouse.@"1" > plusX and value.* < max and mouse.@"2" > y and mouse.@"1" < plusX + charWidth and mouse.@"2" < y + charHeight) {
-                value.* += 1;
-                delay = 20;
-            }
+    if (mouse_clicked) {
+        if (mouse.@"1" > x and value.* > min and mouse.@"2" > y and mouse.@"1" < x + charWidth and mouse.@"2" < y + charHeight) {
+            value.* -= 1;
+        } else if (mouse.@"1" > plusX and value.* < max and mouse.@"2" > y and mouse.@"1" < plusX + charWidth and mouse.@"2" < y + charHeight) {
+            value.* += 1;
         }
     }
 
     return plusX + @as(f32, @floatFromInt((try plus.getSize()).@"0")) - x;
 }
 
-fn Button(action: *const fn () anyerror!void, text: []const u8, x: f32, y: f32) !f32 {
+pub fn Button(action: *const fn () anyerror!void, text: []const u8, x: f32, y: f32) !f32 {
     const cursor = sdl3.mouse.getState();
 
-    const rendtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&root.textEngine)).*, root.font, text);
+    const rendtext = try sdl3.ttf.Text.init(@as(*?sdl3.ttf.TextEngine, @ptrCast(&textEngine)).*, font, text);
     try rendtext.setColor(198, 208, 245, 255);
 
     const textsize = try rendtext.getSize();
 
     if (cursor.@"2" > y and cursor.@"1" > x and cursor.@"1" < x + @as(f32, @floatFromInt(textsize.@"0")) and cursor.@"2" < y + @as(f32, @floatFromInt(textsize.@"1"))) {
-        try root.renderer.setDrawColor(rgb(65, 69, 89));
-        try root.renderer.renderFillRect(.{
+        try renderer.setDrawColor(rgb(65, 69, 89));
+        try renderer.renderFillRect(.{
             .x = x,
             .y = y,
             .w = @as(f32, @floatFromInt(textsize.@"0")),
             .h = 24,
         });
 
-        if (delay == 0 and cursor.@"0".left and root.overlayActive == false) {
-            delay = 20;
+        if (mouse_clicked) {
             try action();
         }
     } else {
-        try root.renderer.setDrawColor(rgb(81, 87, 109));
-        try root.renderer.renderFillRect(.{
+        try renderer.setDrawColor(rgb(81, 87, 109));
+        try renderer.renderFillRect(.{
             .x = x,
             .y = y,
             .w = @as(f32, @floatFromInt(textsize.@"0")),

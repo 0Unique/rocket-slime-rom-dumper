@@ -26,62 +26,38 @@ pub fn main() !void {
     // required for opening file save/open dialogs on linux
     if (builtin.os.tag == .linux) try sdl3.hints.set(.file_dialog_driver, "zenity");
     arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-
+    defer arena.deinit();
     allocator = arena.allocator();
 
     sdl3.init(init_flags) catch {
         std.log.err("sdl3 init failed: {s}\n", .{sdl3.errors.get().?});
         return;
     };
+    defer sdl3.quit(init_flags);
+    defer sdl3.shutdown();
     sdl3.ttf.init() catch {
         std.log.err("ttf init failed: {s}\n", .{sdl3.errors.get().?});
         return;
     };
 
     window = try sdl3.video.Window.init("Rocket Slime Rom Dumper", screen_width, screen_height, .{ .resizable = true });
+    defer window.deinit();
 
     renderer = try sdl3.render.Renderer.init(window, null);
+    defer renderer.deinit();
 
-    try ui.init(&renderer, &allocator);
-
-    sdl3.dialog.showOpenFile(void, &rom_file_chosen, null, window, null, null, false);
+    //sdl3.dialog.showOpenFile(void, &rom_file_chosen, null, window, null, null, false);
 
     // wait for FS loaded
-    while (loaded == false) {
-        sdl3.events.pump();
-    }
+    //while (loaded == false) {
+    //sdl3.events.pump();
+    //}
+    //defer FS.deinit();
 
-    defer FS.deinit();
+    try ui.init(&renderer, allocator);
+    defer ui.deinit();
 
-    defer sdl3.shutdown();
-
-    var fps_capper = sdl3.extras.FramerateCapper(f32){ .mode = .{ .limited = fps } };
-
-    var quit = false;
-    while (!quit) {
-        const dt = fps_capper.delay();
-        _ = dt;
-
-        renderer.clear() catch continue;
-
-        ui.render(&allocator) catch continue;
-
-        renderer.present() catch continue;
-
-        // Event logic.
-        while (sdl3.events.poll()) |event|
-            switch (event) {
-                .quit => quit = true,
-                .terminating => quit = true,
-                .window_resized => ui.refresh() catch continue,
-                else => {},
-            };
-    }
-
-    renderer.deinit();
-    window.deinit();
-    sdl3.quit(init_flags);
-    arena.deinit();
+    while (!try ui.update()) {}
 }
 
 fn rom_file_chosen(_: ?*void, file_list: ?[]const [*:0]const u8, filter: ?usize, err: bool) void {

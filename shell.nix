@@ -39,8 +39,8 @@ pkgs.mkShellNoCC {
         ]
       }
 
-    zig fetch --save git+https://codeberg.org/7Games/zig-sdl3#v0.1.6
-    zig build ${if win then "-Dtarget=x86_64-windows -Doptimize=ReleaseSmall" else "&& ./zig-out/bin/rocket-slime-sprite-viewer"}
-    exit
+      zig fetch --save git+https://codeberg.org/7Games/zig-sdl3#v0.1.6
+      zig build ${if win then "-Dtarget=x86_64-windows -Doptimize=Debug && wine_workaround=true wine ./zig-out/bin/rocket-slime-sprite-viewer.exe" else "&& ./zig-out/bin/rocket-slime-sprite-viewer"}
+
   '';
 }

@@ -83,7 +83,7 @@ pub const ent_res_list = struct {
     file_name: []const u8,
     palette_fid: u16,
 
-    pub fn load_sprites(self: *const ent_res_list, allocator: *std.mem.Allocator) ![]graphics.Sprite {
+    pub fn load_sprites(self: *const ent_res_list, allocator: std.mem.Allocator) ![]graphics.Sprite {
         var rom_file: file.FSFile = FS.rom_archive.OpenFile(self.file_name);
         const palette: *graphics.Palette256 = try rom_file.readIndexedStruct(allocator, self.palette_fid, graphics.Palette256);
 
@@ -161,7 +161,7 @@ pub const ent_res_entry_lists: [23]ent_res_list = .{
         .palette_fid = 0x5b,
     },
     .{
-        .label = "level select top screen",
+        .label = "level select top",
         .ent_count = 1,
         .address = ct.address(0x021331a8),
         .screen = .top,
@@ -169,7 +169,7 @@ pub const ent_res_entry_lists: [23]ent_res_list = .{
         .palette_fid = 7,
     },
     .{
-        .label = "level select bottom screen",
+        .label = "level select bottom",
         .ent_count = 0xc,
         .address = ct.address(0x021331bc),
         .screen = .bottom,
@@ -241,7 +241,7 @@ pub const ent_res_entry_lists: [23]ent_res_list = .{
         .palette_fid = 0x5b, // palette might be wrong here
     },
     .{
-        .label = "back to town top screen",
+        .label = "back to town top",
         .ent_count = 4,
         .address = ct.address(0x02133f34),
         .screen = .top,
@@ -249,7 +249,7 @@ pub const ent_res_entry_lists: [23]ent_res_list = .{
         .palette_fid = 0x21,
     },
     .{
-        .label = "back to town bottom screen",
+        .label = "back to town bottom",
         .ent_count = 4,
         .address = ct.address(0x02133f7c),
         .screen = .bottom,

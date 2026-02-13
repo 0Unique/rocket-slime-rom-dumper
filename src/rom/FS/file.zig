@@ -132,7 +132,7 @@ pub const FSFile = extern struct {
         return self.props.pos.bottom - self.props.pos.pos;
     }
 
-    pub fn readIndexedRaw(self: *FSFile, allocator: *std.mem.Allocator, fid: u16) ![]u8 {
+    pub fn readIndexedRaw(self: *FSFile, allocator: std.mem.Allocator, fid: u16) ![]u8 {
         const size = self.SeekIndexed(fid);
         const out = try allocator.alloc(u8, size);
         if (size > 0) // causes a crash on windows without this
@@ -140,7 +140,7 @@ pub const FSFile = extern struct {
         return out;
     }
 
-    pub fn readIndexedStruct(self: *FSFile, allocator: *std.mem.Allocator, fid: u16, T: type) !*T {
+    pub fn readIndexedStruct(self: *FSFile, allocator: std.mem.Allocator, fid: u16, T: type) !*T {
         _ = self.SeekIndexed(fid);
         const out = try allocator.create(T);
         _ = try FS.rom.read(@as([]u8, @ptrCast(out)));
