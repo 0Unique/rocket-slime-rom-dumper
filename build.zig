@@ -26,6 +26,6 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(exe);
 
     const src_dir = try std.fs.cwd().openDir("src", .{});
-    const dest_dir = try std.fs.cwd().openDir("zig-out/bin", .{});
+    const dest_dir = try std.fs.cwd().makeOpenPath("zig-out/bin", .{});
     try src_dir.copyFile("JetBrainsMono-Regular.ttf", dest_dir, "JetBrainsMono-Regular.ttf", .{});
 }

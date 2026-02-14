@@ -293,10 +293,11 @@ pub const Sprite = struct {
         const surface = try sdl3.surface.Surface.init(surf_width, surf_height, .packed_rgba_5_5_5_1);
 
         for (self.oamData.frames[frame_num].attributes) |attr| {
-            const width = attr.attr12.getTileWidth();
+            const width: u16 = @intCast(attr.attr12.getTileWidth());
+            const height: u16 = @intCast(attr.attr12.getTileHeight());
 
-            var tile_x: u16 = 0;
-            var tile_y: u16 = 0;
+            var tile_x: i32 = if (attr.attr12.horizontal_flip) width - 1 else 0;
+            var tile_y: i32 = if (attr.attr12.vertical_flip) height - 1 else 0;
 
             for (0..attr.attr12.getTileCount() - 1) |i| {
                 const tile = self.tiles[i + attr.attr3.tile_num * 4];
@@ -307,20 +308,27 @@ pub const Sprite = struct {
                         var acY = y;
                         if (attr.attr12.horizontal_flip) acX = 6 - acX;
                         if (attr.attr12.vertical_flip) acY = 7 - acY;
+
+                        const xpos: usize = acX + @abs(tile_x * 8 + attr.attr12.x + @as(i9, @intCast(@abs(minOffsetX))));
+                        const ypos: usize = acY + @abs(tile_y * 8 + attr.attr12.y + @as(i10, @intCast(@abs(minOffsetY))));
+
+                        const xposL = xpos + @as(usize, (if (attr.attr12.horizontal_flip) 1 else 0));
+                        const xposR = xpos + @as(usize, (if (attr.attr12.horizontal_flip) 0 else 1));
+
                         var colorLeft = self.palette[attr.attr3.palette_num][palette_index.left].toSDL();
                         if (palette_index.left == 0) colorLeft.a = 0;
-                        try surface.writePixel(acX + tile_x * 8 + @abs(attr.attr12.x + @as(i9, @intCast(@abs(minOffsetX)))), acY + tile_y * 8 + @abs(attr.attr12.y + @as(i10, @intCast(@abs(minOffsetY)))), colorLeft);
+                        if (palette_index.left != 0) try surface.writePixel(xposL, ypos, colorLeft);
 
                         var colorRight = self.palette[attr.attr3.palette_num][palette_index.right].toSDL();
                         if (palette_index.right == 0) colorRight.a = 0;
-                        try surface.writePixel(acX + 1 + tile_x * 8 + @abs(attr.attr12.x + @as(i9, @intCast(@abs(minOffsetX)))), acY + tile_y * 8 + @abs(attr.attr12.y + @as(i10, @intCast(@abs(minOffsetY)))), colorRight);
+                        if (palette_index.right != 0) try surface.writePixel(xposR, ypos, colorRight);
                     }
                 }
 
-                tile_x += 1;
-                if (tile_x == width) {
-                    tile_x = 0;
-                    tile_y += 1;
+                if (attr.attr12.horizontal_flip) tile_x -= 1 else tile_x += 1;
+                if (tile_x == if (attr.attr12.horizontal_flip) @as(i32, @intCast(-1)) else width) {
+                    tile_x = if (attr.attr12.horizontal_flip) width - 1 else 0;
+                    if (attr.attr12.vertical_flip) tile_y -= 1 else tile_y += 1;
                 }
             }
         }
