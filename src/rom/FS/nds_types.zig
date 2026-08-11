@@ -1,7 +1,3 @@
-const std = @import("std");
-const FS = @import("FS.zig");
-const file = @import("file.zig");
-
 pub const NDSHeader = extern struct {
     // 0x000 - 0x00B: Game Title (12 bytes)
     game_title: [12]u8,
@@ -122,46 +118,13 @@ pub const NDSHeader = extern struct {
     }
 };
 
-pub const FSArchive = extern struct {
-    name: extern union {
-        string: [4]u8,
-        pack: u32,
-    },
-    list: file.FSFileLink,
-    base: u32,
-    fat: u32,
-    fat_size: u32,
-    fnt: u32,
-    fnt_size: u32,
+pub const FntDirEntry = extern struct {
+    entry_start: u32,
+    entry_file_id: u16,
+    parent_id: u16,
+};
 
-    pub fn OpenFile(
-        self: *FSArchive,
-        file_name: []const u8,
-    ) file.FSFile {
-        var out: file.FSFile = std.mem.zeroes(file.FSFile);
-        out.arc = self;
-        out.props.pos.pos = self.fnt;
-        FS.rom.seekTo(out.arc.fnt) catch |err| {
-            std.debug.print("Failed to seek to file name table: {}\n", .{err});
-            return out;
-        };
-        const fntentry = FS.rom.deprecatedReader().readStruct(file.FntDirEntry) catch |err| {
-            std.debug.print("Failed to read file name table entry: {}\n", .{err});
-            return out;
-        };
-        out.props.pos.pos = fntentry.entry_start;
-        out.props.pos.index = fntentry.entry_file_id;
-        out.props.parent = fntentry.parent_id;
-
-        for (0..261) |i| {
-            out.OpenNextFile(@truncate(i));
-            const target_name: []u8 = std.mem.sliceTo(out.props.name, 0);
-
-            if (std.mem.eql(u8, target_name, file_name)) {
-                return out;
-            }
-            out.close();
-        }
-        return out;
-    }
+pub const FatFileEntry = extern struct {
+    top: u32,
+    bottom: u32,
 };

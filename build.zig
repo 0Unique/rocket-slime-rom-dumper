@@ -15,17 +15,8 @@ pub fn build(b: *std.Build) !void {
         }),
     });
 
-    const sdl3 = b.dependency("sdl3", .{
-        .target = target,
-        .optimize = optimize,
-        .ext_image = true,
-        .ext_ttf = true,
-    });
-    exe.root_module.addImport("sdl3", sdl3.module("sdl3"));
+    const dvui_dep = b.dependency("dvui", .{ .target = target, .optimize = optimize, .backend = .sdl3 });
+    exe.root_module.addImport("dvui", dvui_dep.module("dvui_sdl3"));
 
     b.installArtifact(exe);
-
-    const src_dir = try std.fs.cwd().openDir("src", .{});
-    const dest_dir = try std.fs.cwd().makeOpenPath("zig-out/bin", .{});
-    try src_dir.copyFile("JetBrainsMono-Regular.ttf", dest_dir, "JetBrainsMono-Regular.ttf", .{});
 }

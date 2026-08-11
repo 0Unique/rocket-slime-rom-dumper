@@ -1,12 +1,12 @@
 .{
     .name = .rocket_slime_rom_dumper,
-    .version = "0.15.2",
+    .version = "0.16.0",
     .dependencies = .{
-        .sdl3 = .{
-            .url = "git+https://codeberg.org/7Games/zig-sdl3?ref=v0.1.6#9c1842246c59f03f87ba59b160ca7e3d5e5ce972",
-            .hash = "sdl3-0.1.6-NmT1Q5sQJgCzT6hLj7WOSrwxE0Qsef1wIkDopbOOFru0",
+        .dvui = .{
+            .url = "git+https://github.com/david-vanderson/dvui?ref=main#27ec7dd96ab4ebdf03b9ab7d963a8b5aeab7ac7f",
+            .hash = "dvui-0.5.0-dev-AQFJmXhHAQHStlBqdnsHrkz_MnrciisSYaJd_36xpSRM",
         },
     },
     .paths = .{""},
-    .fingerprint = 0xaeca1902f1dc676e,
+    .fingerprint = 0xaeca1902c7afa17a,
 }

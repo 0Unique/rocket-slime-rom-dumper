@@ -1,71 +1,20 @@
 const std = @import("std");
-const graphics = @import("graphics.zig");
-const file = @import("FS/file.zig");
+const graphics = @import("graphics/graphics.zig");
 const ct = @import("comptime_util.zig");
 const FS = @import("FS/FS.zig");
-const parser = @import("parsing.zig");
 
-pub const FS_entry = struct {
-    file_name: []const u8,
-    file_data_addr: u64,
-    file_size: u32,
-};
-
-//these are hardcoded in the rom
-pub const ListAddresses = enum(u64) {
-    forewood = 0x13222C, // add 0x1FFC000 to get the address in ghidra
-    tootinschleiman = 0x132240,
-    // TODO: add the rest
-};
-
-pub const def = extern struct {
-    capabilities: u8,
-    file_index: u8,
-    unknown: u16,
-    file_index2: u8,
-    unknown2: u8,
-    unknown3: u8,
-    unknown4: u8,
-
-    // pointers to functions
-    func1: u32,
-    func2: u32,
-    update_func: u32,
-    func4: u32,
-    func5: u32,
-
-    //rest is unknown
-    unknowns: [40]u8,
-
-    comptime {
-        if (@sizeOf(@This()) != 0x44) {
-            @compileError("ent def must be 0x44 bytes");
-        }
-    }
-};
-
-pub const entity_resources = extern struct {
-    unknowns: u8[8],
-    palette_maybe_ptr: u32,
-    comptime {
-        if (@sizeOf(@This()) != 0x4c) {
-            @compileError("ent resources must be 0x4c bytes");
-        }
-    }
-};
-
-pub const ent_res_entry = struct {
-    x: u16 align(2),
-    y: u16 align(2),
-    oam_file_id: u16 align(2),
-    tiles_file_id: u16 align(2),
+pub const ent_res_entry = extern struct {
+    x: u16,
+    y: u16,
+    oam_file_id: u16,
+    tiles_file_id: u16,
 
     //something to do with animations
-    flags: u16 align(2),
-    flags2: u16 align(2),
-    flags3: u16 align(2),
-    flags4: u16 align(2),
-    unknown: u16 align(2),
+    flags: u16,
+    flags2: u16,
+    flags3: u16,
+    flags4: u16,
+    unknown: u16,
     comptime {
         if (@sizeOf(@This()) != 0x12) {
             const msg = std.fmt.comptimePrint("ent_res_entry must be 0x12 bytes, is {}", .{@sizeOf(@This())});
@@ -78,31 +27,38 @@ pub const ent_res_list = struct {
     label: []const u8,
     ent_count: usize,
     address: u64,
-    screen: graphics.Screen,
+    screen: graphics.nds_types.Screen,
     compressed: bool = false,
     file_name: []const u8,
     palette_fid: u16,
 
-    pub fn load_sprites(self: *const ent_res_list, allocator: std.mem.Allocator) ![]graphics.Sprite {
-        var rom_file: file.FSFile = FS.rom_archive.OpenFile(self.file_name);
-        const palette: *graphics.Palette256 = try rom_file.readIndexedStruct(allocator, self.palette_fid, graphics.Palette256);
+    pub fn load_sprites(self: *const ent_res_list, rom: FS.rom, allocator: std.mem.Allocator) ![]?graphics.rs_types.packedOAMsprite {
+        const rom_file = rom.files.get(self.file_name);
+        if (rom_file) |file| {
+            const unpacked = try file.unpack(allocator);
+            const palettes: []align(1) const graphics.nds_types.Palette16 = @ptrCast(unpacked[self.palette_fid]);
 
-        const entries = try allocator.alloc(ent_res_entry, self.ent_count);
-        try FS.rom.seekTo(self.address);
-        _ = try FS.rom.read(@as([]u8, @ptrCast(entries)));
+            const entries: []align(1) const ent_res_entry = @ptrCast(rom.data[self.address..][0 .. self.ent_count * @sizeOf(ent_res_entry)]); //try allocator.alloc(ent_res_entry, self.ent_count);
 
-        var sprites = try allocator.alloc(graphics.Sprite, self.ent_count);
+            var sprites = try allocator.alloc(?graphics.rs_types.packedOAMsprite, self.ent_count);
 
-        for (entries, 0..) |entry, i| {
-            sprites[i] = parser.read_ent_gx_data(&rom_file, @constCast(&entry), self.screen, allocator, palette);
-            sprites[i].oam_id = entry.oam_file_id;
-            sprites[i].tiles_id = entry.tiles_file_id;
+            for (entries, 0..) |entry, i| {
+                if (entry.tiles_file_id > unpacked.len) {
+                    sprites[i] = null;
+                    continue;
+                }
+                const tiles: []align(1) const graphics.nds_types.Tile = @ptrCast(unpacked[entry.tiles_file_id]);
+
+                sprites[i] = try graphics.rs_types.packedOAMsprite.read(allocator, unpacked[entry.oam_file_id], tiles, palettes); //parser.read_ent_gx_data(&rom_file, @constCast(&entry), self.screen, allocator, palette);
+            }
+
+            return sprites;
         }
-
-        return sprites;
+        return error.FileNotFound;
     }
 };
 
+// TODO: this might be getting replaced since I now know entities have a pointer to their resources
 pub const ent_res_entry_lists: [23]ent_res_list = .{
     .{
         .label = "title top screen",

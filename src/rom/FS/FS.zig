@@ -1,37 +1,82 @@
 const std = @import("std");
+const nds_types = @import("nds_types.zig");
 
-const file = @import("file.zig");
-const archive = @import("archive.zig");
-pub var rom_archive: archive.FSArchive = std.mem.zeroes(archive.FSArchive);
-pub var rom: *std.fs.File = undefined;
+pub const PackedFile = [][]align(1) const u8;
 
-pub fn init(rom_path: []const u8, allocator: std.mem.Allocator) bool {
-    rom = allocator.create(std.fs.File) catch |err| {
-        std.log.err("Failed to create rom file: {}\n", .{err});
-        return false;
-    };
+pub const File = struct {
+    data: []align(1) const u8,
 
-    rom.* = std.fs.openFileAbsolute(rom_path, .{ .mode = .read_only }) catch |err| {
-        std.log.err("Failed to open rom: {}\n", .{err});
-        return false;
-    };
+    fn packedFileCount(self: @This()) u32 {
+        return std.mem.readInt(u32, self.data[0..@sizeOf(u32)], .little);
+    }
 
-    const header: archive.NDSHeader = rom.deprecatedReader().readStruct(archive.NDSHeader) catch |err| {
-        std.log.err("Failed to read header: {}\n", .{err});
-        return false;
-    };
+    fn packedFileOffset(self: @This(), index: usize) u32 {
+        return std.mem.readInt(u32, self.data[4 + index * 8 ..][0..@sizeOf(u32)], .little);
+    }
 
-    std.debug.print("Game Title: {s}\n", .{header.game_title});
+    fn packedFileSize(self: @This(), index: usize) u32 {
+        return std.mem.readInt(u32, self.data[8 + index * 8 ..][0..@sizeOf(u32)], .little);
+    }
 
-    // init "rom" archive
-    rom_archive.base = 0;
-    rom_archive.fat_size = header.fat_size;
-    rom_archive.fat = header.fat_offset;
-    rom_archive.fnt_size = header.filename_table_size;
-    rom_archive.fnt = header.filename_table_offset;
-    return true;
-}
+    fn packedFileContent(self: @This(), index: usize) []align(1) const u8 {
+        const count = self.packedFileCount();
+        const offset = self.packedFileOffset(index);
+        const size = self.packedFileSize(index);
+        return self.data[offset + count * 8 + 4 ..][0..size];
+    }
 
-pub fn deinit() void {
-    rom.close();
-}
+    pub fn unpack(self: @This(), allocator: std.mem.Allocator) !PackedFile {
+        const count = self.packedFileCount();
+        const out = try allocator.alloc([]const u8, count);
+        for (0..count) |i| {
+            out[i] = self.packedFileContent(i);
+        }
+        return out;
+    }
+};
+pub const FileMap = std.StringHashMap(File);
+
+pub const rom = struct {
+    data: []align(1) const u8,
+    header: *align(1) nds_types.NDSHeader,
+    files: FileMap,
+
+    pub fn open(io: std.Io, rom_path: []const u8, allocator: std.mem.Allocator) !@This() {
+        const rom_file: std.Io.File = try std.Io.Dir.openFileAbsolute(io, rom_path, .{ .mode = .read_only });
+        const size = (try rom_file.stat(io)).size;
+        var data = try allocator.alloc(u8, size);
+        _ = try rom_file.readPositionalAll(io, data, 0);
+        rom_file.close(io);
+
+        const header: *align(1) nds_types.NDSHeader = @ptrCast(&data[0]);
+
+        const fat: []align(1) const nds_types.FatFileEntry = @ptrCast(data[header.fat_offset..][0..header.fat_size]);
+        const fnt = data[header.filename_table_offset..][0..header.filename_table_size];
+
+        var out: @This() = .{
+            .data = data,
+            .header = header,
+            .files = undefined,
+        };
+
+        out.files = try out.build_file_table(fnt, fat, allocator);
+        return out;
+    }
+
+    pub fn build_file_table(self: @This(), fnt: []const u8, fat: []align(1) const nds_types.FatFileEntry, allocator: std.mem.Allocator) !FileMap {
+        var out: FileMap = .init(allocator);
+
+        const dirEntry: *align(1) const nds_types.FntDirEntry = @ptrCast(&fnt[0]);
+        var pos = dirEntry.entry_start;
+        var name_len = fnt[pos];
+        for (fat) |fat_entry| {
+            const name = fnt[pos + 1 ..][0..name_len];
+            const file_content: []align(1) const u8 = self.data[fat_entry.top..fat_entry.bottom];
+            try out.putNoClobber(name, .{ .data = file_content });
+            pos += name_len + 1;
+            name_len = fnt[pos];
+        }
+
+        return out;
+    }
+};

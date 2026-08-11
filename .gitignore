@@ -4,3 +4,4 @@ result/
 result
 flake.lock
 out/
+zig-pkg/
